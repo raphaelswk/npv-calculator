@@ -1,103 +1,281 @@
-import Image from 'next/image';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+'use client';
+
+import { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { NpvRequest, NpvRequestSchema } from '@/app/lib/validators';
+
+import { Button } from '@/app/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/app/components/ui/card';
+import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/app/components/ui/table';
+import { Toaster } from '@/app/components/ui/sonner';
+import { toast } from 'sonner';
+import { NpvChart } from '@/app/components/NpvChart';
+
+type NpvResult = {
+  discountRate: number;
+  netPresentValue: number;
+};
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{' '}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [results, setResults] = useState<NpvResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now test
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const form = useForm<NpvRequest>({
+    // resolver: zodResolver(NpvRequestSchema),
+    defaultValues: {
+      cashFlows: '-100000, 25000, 30000, 35000, 40000',
+      lowerBoundDiscountRate: 0.01,
+      upperBoundDiscountRate: 0.15,
+      discountRateIncrement: 0.01,
+    },
+  });
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = form;
+
+  const onSubmit = async (data: NpvRequest) => {
+    setIsLoading(true);
+    setResults([]);
+
+    try {
+        const parsedCashFlows = data.cashFlows.split(',').map(cf => parseFloat(cf.trim()));
+        if (parsedCashFlows.some(isNaN)) {
+            toast.error("Invalid cash flow values. Please provide comma-separated numbers.");
+            setIsLoading(false);
+            return;
+        }
+
+        const response = await fetch('https://localhost:7251/api/Npv/calculate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...data, cashFlows: parsedCashFlows })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `HTTP error! status: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("Failed to read response stream.");
+        
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (value) {
+                buffer += decoder.decode(value, { stream: true });
+            }
+            // Inner loop to process all complete objects currently in the buffer
+            while (true) {
+                const objectStartIndex = buffer.indexOf('{');
+                if (objectStartIndex === -1) {
+                    // No more objects in the buffer, wait for more data
+                    break;
+                }
+
+                let braceCount = 0;
+                let objectEndIndex = -1;
+                for (let i = objectStartIndex; i < buffer.length; i++) {
+                    if (buffer[i] === '{') {
+                        braceCount++;
+                    } else if (buffer[i] === '}') {
+                        braceCount--;
+                    }
+                    if (braceCount === 0) {
+                        objectEndIndex = i;
+                        break;
+                    }
+                }
+
+                if (objectEndIndex === -1) {
+                    // We have an incomplete object, wait for the next chunk of data
+                    break;
+                }
+
+                // We found a complete JSON object
+                const jsonObjStr = buffer.substring(objectStartIndex, objectEndIndex + 1);
+                
+                try {
+                    const result = JSON.parse(jsonObjStr);
+                    setResults(prev => [...prev, result]);
+                } catch (e) {
+                    console.warn("Failed to parse JSON chunk:", jsonObjStr, e);
+                }
+
+                // Remove the processed object from the buffer and check for more
+                buffer = buffer.substring(objectEndIndex + 1);
+            }
+
+            if (done) {
+                break; // Exit the main while loop when the stream is finished
+            }
+        }
+
+    } catch (error: any) {
+        console.error("Calculation failed:", error);
+        toast.error(error.message || "An unknown error occurred.");
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <Toaster />
+      <main className="container mx-auto p-4 md:p-8">
+        <header className="text-center mb-8">
+          <h1 className="text-4xl font-bold">NPV Calculator</h1>
+          <p className="text-muted-foreground">
+            Real-time Net Present Value Calculation and Visualization
+          </p>
+        </header>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <Card className="lg:col-span-1">
+            <CardHeader>
+              <CardTitle>Calculation Parameters</CardTitle>
+              <CardDescription>
+                Enter your cash flows and discount rate range.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+                <div>
+                  <Label htmlFor="cashFlows">
+                    Cash Flows (comma-separated)
+                  </Label>
+                  <Input id="cashFlows" {...register('cashFlows')} />
+                  {errors.cashFlows && (
+                    <p className="text-red-500 text-sm mt-1">
+                      {errors.cashFlows.message}
+                    </p>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="lowerBoundDiscountRate">Lower Rate</Label>
+                    <Input
+                      id="lowerBoundDiscountRate"
+                      type="number"
+                      step="0.01"
+                      {...register('lowerBoundDiscountRate')}
+                    />
+                    {errors.lowerBoundDiscountRate && (
+                      <p className="text-red-500 text-sm mt-1">
+                        {errors.lowerBoundDiscountRate.message}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <Label htmlFor="upperBoundDiscountRate">Upper Rate</Label>
+                    <Input
+                      id="upperBoundDiscountRate"
+                      type="number"
+                      step="0.01"
+                      {...register('upperBoundDiscountRate')}
+                    />
+                    {errors.upperBoundDiscountRate && (
+                      <p className="text-red-500 text-sm mt-1">
+                        {errors.upperBoundDiscountRate.message}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="discountRateIncrement">Rate Increment</Label>
+                  <Input
+                    id="discountRateIncrement"
+                    type="number"
+                    step="0.0025"
+                    {...register('discountRateIncrement')}
+                  />
+                  {errors.discountRateIncrement && (
+                    <p className="text-red-500 text-sm mt-1">
+                      {errors.discountRateIncrement.message}
+                    </p>
+                  )}
+                </div>
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading ? 'Calculating...' : 'Calculate NPV'}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Results</CardTitle>
+              <CardDescription>
+                Results will appear here progressively.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <NpvChart data={results} />
+              <div className="max-h-60 overflow-y-auto border rounded-lg">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Discount Rate</TableHead>
+                      <TableHead className="text-right">
+                        Net Present Value (NPV)
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {results.length > 0 ? (
+                      results.map((res, index) => (
+                        <TableRow key={index}>
+                          <TableCell>
+                            {(res.discountRate * 100).toFixed(2)}%
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {res.netPresentValue?.toLocaleString('en-US', { 
+                              style: 'currency', 
+                              currency: 'EUR' }) ?? 'N/A'}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell
+                          colSpan={2}
+                          className="text-center text-muted-foreground h-24"
+                        >
+                          {isLoading
+                            ? 'Receiving data...'
+                            : 'No results to display.'}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+    </>
   );
 }
