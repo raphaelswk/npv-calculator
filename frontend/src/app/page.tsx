@@ -37,13 +37,13 @@ export default function Home() {
   const [results, setResults] = useState<NpvResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  const form = useForm<NpvRequest>({
-    // resolver: zodResolver(NpvRequestSchema),
+  const form = useForm({
+    resolver: zodResolver(NpvRequestSchema),
     defaultValues: {
       cashFlows: '-100000, 25000, 30000, 35000, 40000',
-      lowerBoundDiscountRate: 0.01,
-      upperBoundDiscountRate: 0.15,
-      discountRateIncrement: 0.01,
+      lowerBoundDiscountRate: '0.01',
+      upperBoundDiscountRate: '0.15',
+      discountRateIncrement: '0.01',
     },
   });
 

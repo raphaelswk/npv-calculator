@@ -73,6 +73,11 @@ npm run dev
 ```
 The application will now be available in your browser at http://localhost:3000.
 
+4. (Optional) Run tests
+```bash
+npm test
+```
+
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
